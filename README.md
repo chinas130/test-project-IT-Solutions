@@ -1,75 +1,169 @@
-# React + TypeScript + Vite
+# Менеджер элементов
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+SPA с интерфейсом управления списком из 1 000 000 базовых элементов. Приложение делит рабочую область на две панели («Все элементы» и «Выбранные элементы»), поддерживает фильтрацию, бесконечную прокрутку, добавление пользовательских ID и Drag&Drop сортировку. Состояние выбора и порядок элементов сохраняются на сервере.
 
-Currently, two official plugins are available:
+## Основные возможности
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+- **Два синхронизированных списка.** Левая панель показывает все невыбранные ID, правая ― только выбранные пользователем элементы.
+- **Фильтрация и инфинити‑скролл.** В каждой панели одновременно отображается не более 20 элементов, остальные подгружаются батчами по 20, в том числе в режиме поиска.
+- **Добавление пользовательских ID.** Можно добавить ID за пределами базового диапазона (1…1 000 000). Повторное добавление и некорректные значения блокируются.
+- **Drag&Drop сортировка.** Выбранные элементы можно переупорядочивать мышью, в том числе при активном фильтре.
+- **Сохранение состояния.** Выбор и порядок хранятся в памяти сервера, поэтому переживают перезагрузку страницы. Фильтры намеренно не сохраняются.
+- **Очереди запросов.** Фронтенд объединяет обращения к API: добавления копятся по 10 с, получение/сохранение данных ― раз в 1 с, что исключает дубли и уменьшает нагрузку на сеть.
+- **Режим degraded network.** При потере соединения пользователь получает дружелюбное русскоязычное сообщение об ошибке, состояние интерфейса не «рассыпается».
 
-## React Compiler
+## Технологии
 
-The React Compiler is enabled on this template. See [this documentation](https://react.dev/learn/react-compiler) for more information.
+- **Фронтенд:** React 19, TypeScript, Vite, собственные хуки.
+- **Бэкенд:** Node.js 20 + Express 5 (хранение данных в памяти процесса).
+- **Инфраструктура:** ESLint 9, Vite Preview, Docker (multi-stage) + docker-compose.
 
-Note: This will impact Vite dev & build performances.
+## Требования
 
-## Expanding the ESLint configuration
+- Node.js ≥ 20
+- npm ≥ 10
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+## Установка зависимостей
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm install
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+## Разработка локально
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+Запускаем API и фронтенд в разных терминалах:
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+# API на http://localhost:3001
+npm run server
+
+# Vite dev server на http://localhost:5173
+npm run dev
 ```
+
+По умолчанию фронтенд ожидает API на `http://localhost:3001`. Чтобы переопределить адрес, задайте переменную `VITE_API_URL`.
+
+## Сборка и предпросмотр
+
+```bash
+npm run build      # tsc -b && vite build, результат в dist/
+npm run preview    # локальный просмотр собранного фронта
+```
+
+## Скрипты npm
+
+| Скрипт         | Назначение                                    |
+| -------------- | --------------------------------------------- |
+| `npm run dev`  | Vite dev server                               |
+| `npm run server` | Express API (памятный сторедж)             |
+| `npm run build`| Полная сборка (tsc + Vite)                    |
+| `npm run preview` | Статика из `dist`                          |
+| `npm run lint` | ESLint                                        |
+
+## Структура проекта
+
+```
+.
+├─ server/          # Express API
+├─ src/             # фронтенд на React
+│  ├─ api/          # клиент и очереди запросов
+│  ├─ hooks/        # вспомогательные хуки
+│  └─ assets/styles
+├─ public/          # статические файлы
+├─ dist/            # результат сборки
+├─ Dockerfile       # multi-stage сборка (см. ниже)
+└─ docker-compose.yml
+```
+
+## API
+
+Все конечные точки принимают/возвращают JSON.
+
+### POST `/api/query`
+
+Батчевый запрос списка данных.
+
+```json
+{
+  "queries": [
+    { "key": "available:term:0", "type": "available", "filter": "123", "offset": 0, "limit": 20 },
+    { "key": "selected:term:0", "type": "selected", "filter": "123", "offset": 0, "limit": 20 },
+    { "key": "selectionFull", "type": "selectionFull" }
+  ]
+}
+```
+
+Ответ:
+
+```json
+{
+  "results": {
+    "available:term:0": { "items": [1, 42, ...], "total": 250 },
+    "selected:term:0": { "items": [5, 7], "total": 12 },
+    "selectionFull": { "items": [5,7,10,...], "total": 12 }
+  }
+}
+```
+
+- `available` ― все ID, кроме выбранных. Сначала базовый диапазон, затем добавленные вручную.
+- `selected` ― текущий порядок правого списка, с учётом фильтра.
+- `selectionFull` ― быстрый способ получить полный порядок без пагинации (используется при загрузке приложения).
+
+### POST `/api/items/batch`
+
+Добавление пользовательских ID.
+
+```json
+{ "ids": [1000002, 1000003] }
+```
+
+Ответ содержит массив успешно добавленных ID и причины отклонения остальных.
+
+### POST `/api/selection`
+
+Сохранение нового порядка/набора выбранных элементов.
+
+```json
+{ "selectedIds": [5,7,10] }
+```
+
+## Очереди запросов (фронтенд)
+
+- **BatchQueryQueue** (`src/api/queues.ts`) ― собирает запросы к `/api/query` раз в 1 с и агрегирует ответы по ключу `key`.
+- **AddQueue** ― хранит заявки на добавление ID в течение 10 с, не допускает дубликаты.
+- **LatestPayloadQueue** ― оставляет только последнее состояние выбора перед отправкой на сервер, чтобы не перегружать API.
+
+## Docker
+
+### Одиночный контейнер (API + статика)
+
+```bash
+# собираем stage `api`
+docker build -t element-manager --target api .
+
+# запускаем
+docker run -p 3001:3001 --env PORT=3001 element-manager
+```
+
+### Два контейнера (API + nginx)
+
+```bash
+docker compose up --build
+```
+
+- `api` слушает `http://localhost:3001`
+- `web` (nginx) доступен на `http://localhost:8080` и проксирует запросы к сервису `api`
+
+Параметр `VITE_API_URL` передаётся в `docker-compose.yml`, его можно переопределить при сборке.
+
+## Замечания по архитектуре
+
+- Хранение данных реализовано в оперативной памяти процесса Node.js (достаточно для тестового задания).
+- Все значения ID валидируются и дедуплицируются как на фронте, так и на бэкенде.
+- Ограничение «не более 20 элементов за раз» реализовано на обоих слоях (константа `PAGE_SIZE`).
+
+## Дальнейшие улучшения
+
+- Добавить unit/e2e тесты.
+- Интегрировать постоянное хранилище (например, SQLite/Redis) вместо памяти процесса.
+- Настроить CI для сборки Docker image и деплоя.
