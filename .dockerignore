@@ -1,0 +1,11 @@
+.gitignore
+node_modules
+dist
+coverage
+.vite
+.vscode
+.idea
+.DS_Store
+*.log
+.env.local
+.git

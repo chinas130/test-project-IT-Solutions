@@ -1,0 +1,20 @@
+services:
+  api:
+    build:
+      context: .
+      target: api
+    environment:
+      - PORT=3001
+    ports:
+      - '3001:3001'
+
+  web:
+    build:
+      context: .
+      target: web
+      args:
+        VITE_API_URL: http://localhost:3001
+    depends_on:
+      - api
+    ports:
+      - '80:80'
