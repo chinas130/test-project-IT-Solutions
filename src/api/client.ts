@@ -1,5 +1,3 @@
-import { AddQueue, BatchQueryQueue, LatestPayloadQueue, type AddQueueResult } from './queues'
-
 export type QueryResult = {
   items: number[]
   total: number
@@ -41,31 +39,34 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
   return response.json()
 }
 
-const queryQueue = new BatchQueryQueue<QueryRequest, QueryResult>(1000, async (requests) => {
-  if (!requests.length) return {}
-  const data = await postJson<{ results: Record<string, QueryResult> }>('/api/query', {
-    queries: requests,
+export async function runQuery(request: QueryRequest): Promise<QueryResult> {
+  const payload = await postJson<{ results: Record<string, QueryResult> }>('/api/query', {
+    queries: [request],
   })
-  return data.results ?? {}
-})
-
-const addQueue = new AddQueue(10_000, async (ids) => {
-  if (!ids.length) return { added: [], rejected: [] }
-  return postJson('/api/items/batch', { ids })
-})
-
-const selectionQueue = new LatestPayloadQueue<number[], void>(1000, async (payload) => {
-  await postJson('/api/selection', { selectedIds: payload })
-})
-
-export function runQuery(request: QueryRequest) {
-  return queryQueue.enqueue(request)
+  const result = payload.results?.[request.key]
+  if (!result) {
+    throw new Error('Сервер не вернул результат для запроса')
+  }
+  return result
 }
 
-export function enqueueAddition(id: number): Promise<AddQueueResult> {
-  return addQueue.enqueue(id)
+export type AddResult = { id: number; success: boolean; message: string }
+
+export async function enqueueAddition(id: number): Promise<AddResult> {
+  if (!Number.isInteger(id) || id <= 0) {
+    throw new Error('ID должен быть положительным целым числом')
+  }
+  const result = await postJson<{
+    added: number[]
+    rejected: Array<{ id: number; reason: string }>
+  }>('/api/items/batch', { ids: [id] })
+  if (result.added?.includes(id)) {
+    return { id, success: true, message: `ID ${id} успешно добавлен` }
+  }
+  const reason = result.rejected?.find((item) => Number(item.id) === id)?.reason
+  return { id, success: false, message: reason ?? 'ID не был добавлен' }
 }
 
-export function persistSelection(ids: number[]) {
-  return selectionQueue.enqueue([...ids])
+export async function persistSelection(ids: number[]) {
+  await postJson('/api/selection', { selectedIds: [...ids] })
 }

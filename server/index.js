@@ -5,7 +5,6 @@ import fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
 const PORT = Number(process.env.PORT) || 3001
-const HOST = process.env.HOST || '0.0.0.0'
 const BASE_MAX_ID = 1_000_000
 const PAGE_LIMIT = 20
 const QUERY_BATCH_INTERVAL = 1000
@@ -308,6 +307,6 @@ if (fs.existsSync(distPath)) {
   })
 }
 
-app.listen(PORT, HOST, () => {
-  console.log(`API server running on http://${HOST}:${PORT}`)
+app.listen(PORT, () => {
+  console.log(`API server running on port ${PORT}`)
 })
