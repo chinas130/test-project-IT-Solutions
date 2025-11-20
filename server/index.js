@@ -5,8 +5,12 @@ import fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
 const PORT = Number(process.env.PORT) || 3001
+const HOST = process.env.HOST || '0.0.0.0'
 const BASE_MAX_ID = 1_000_000
 const PAGE_LIMIT = 20
+const QUERY_BATCH_INTERVAL = 1000
+const SELECTION_BATCH_INTERVAL = 1000
+const ADD_BATCH_INTERVAL = 10_000
 
 const app = express()
 app.use((req, res, next) => {
@@ -121,63 +125,177 @@ const sanitizeIds = (ids) => {
   return result
 }
 
-app.post('/api/items/batch', (req, res) => {
+const createQueryBatcher = () => {
+  let timer = null
+  let pending = []
+
+  const flush = () => {
+    timer = null
+    if (!pending.length) return
+
+    const collectedQueries = []
+    const keyToQuery = new Map()
+    for (const item of pending) {
+      for (const query of item.queries) {
+        if (!query?.key) continue
+        keyToQuery.set(query.key, query)
+      }
+    }
+    collectedQueries.push(...keyToQuery.values())
+
+    const results = {}
+    for (const query of collectedQueries) {
+      if (query.type === 'available') {
+        results[query.key] = buildAvailableResult(query)
+      } else if (query.type === 'selected') {
+        results[query.key] = buildSelectedResult(query)
+      } else if (query.type === 'selectionFull') {
+        results[query.key] = { items: [...selectedIds], total: selectedIds.length }
+      }
+    }
+
+    for (const item of pending) {
+      const response = {}
+      for (const query of item.queries) {
+        if (!query?.key) continue
+        if (results[query.key] !== undefined) {
+          response[query.key] = results[query.key]
+        }
+      }
+      item.resolve({ results: response })
+    }
+    pending = []
+  }
+
+  return {
+    enqueue(queries) {
+      return new Promise((resolve) => {
+        pending.push({ queries, resolve })
+        if (!timer) {
+          timer = setTimeout(flush, QUERY_BATCH_INTERVAL)
+        }
+      })
+    },
+  }
+}
+
+const createSelectionBatcher = () => {
+  let timer = null
+  let latest = null
+  let resolvers = []
+
+  const flush = () => {
+    timer = null
+    if (!latest) {
+      resolvers.forEach((resolve) => resolve({ selected: selectedIds }))
+      resolvers = []
+      return
+    }
+
+    selectedIds = latest
+    ensureSelectedLookup()
+    latest = null
+    resolvers.forEach((resolve) => resolve({ selected: selectedIds }))
+    resolvers = []
+  }
+
+  return {
+    enqueue(nextSelection) {
+      return new Promise((resolve) => {
+        latest = nextSelection
+        resolvers.push(resolve)
+        if (!timer) {
+          timer = setTimeout(flush, SELECTION_BATCH_INTERVAL)
+        }
+      })
+    },
+  }
+}
+
+const createAddBatcher = () => {
+  let timer = null
+  const pendingRequests = []
+
+  const flush = () => {
+    timer = null
+    if (!pendingRequests.length) return
+
+    const requested = []
+    for (const req of pendingRequests) {
+      for (const id of req.ids) {
+        requested.push(id)
+      }
+    }
+    const toAdd = new Set()
+    const rejectedGlobal = []
+
+    for (const raw of requested) {
+      const id = Number(raw)
+      if (!Number.isInteger(id) || id <= 0) {
+        rejectedGlobal.push({ id: raw, reason: 'ID должен быть положительным целым числом' })
+        continue
+      }
+      if (id >= 1 && id <= BASE_MAX_ID) {
+        rejectedGlobal.push({ id, reason: 'ID уже существует в базовом наборе' })
+        continue
+      }
+      if (addedIds.has(id)) {
+        rejectedGlobal.push({ id, reason: 'ID уже добавлен' })
+        continue
+      }
+      toAdd.add(id)
+    }
+
+    const added = Array.from(toAdd).sort((a, b) => a - b)
+    for (const id of added) {
+      addedIds.add(id)
+    }
+    if (added.length > 0) {
+      addedIdCache = null
+    }
+
+    for (const req of pendingRequests) {
+      const addedForRequest = added.filter((id) => req.idSet.has(id))
+      const rejectedForRequest = rejectedGlobal.filter((item) => req.idSet.has(Number(item.id)))
+      req.resolve({ added: addedForRequest, rejected: rejectedForRequest })
+    }
+
+    pendingRequests.length = 0
+  }
+
+  return {
+    enqueue(ids) {
+      return new Promise((resolve) => {
+        const idSet = new Set(Array.isArray(ids) ? ids : [])
+        pendingRequests.push({ ids, idSet, resolve })
+        if (!timer) {
+          timer = setTimeout(flush, ADD_BATCH_INTERVAL)
+        }
+      })
+    },
+  }
+}
+
+const queryBatcher = createQueryBatcher()
+const selectionBatcher = createSelectionBatcher()
+const addBatcher = createAddBatcher()
+
+app.post('/api/items/batch', async (req, res) => {
   const incoming = Array.isArray(req.body?.ids) ? req.body.ids : []
-  const toAdd = new Set()
-  const rejected = []
-
-  for (const raw of incoming) {
-    const id = Number(raw)
-    if (!Number.isInteger(id) || id <= 0) {
-      rejected.push({ id: raw, reason: 'ID должен быть положительным целым числом' })
-      continue
-    }
-    if (id >= 1 && id <= BASE_MAX_ID) {
-      rejected.push({ id, reason: 'ID уже существует в базовом наборе' })
-      continue
-    }
-    if (addedIds.has(id)) {
-      rejected.push({ id, reason: 'ID уже добавлен' })
-      continue
-    }
-    toAdd.add(id)
-  }
-
-  const added = Array.from(toAdd).sort((a, b) => a - b)
-  for (const id of added) {
-    addedIds.add(id)
-  }
-  if (added.length > 0) {
-    addedIdCache = null
-  }
-
-  res.json({ added, rejected })
+  const result = await addBatcher.enqueue(incoming)
+  res.json(result)
 })
 
-app.post('/api/selection', (req, res) => {
+app.post('/api/selection', async (req, res) => {
   const nextSelection = sanitizeIds(req.body?.selectedIds)
-  selectedIds = nextSelection
-  ensureSelectedLookup()
-  res.json({ selected: selectedIds })
+  const result = await selectionBatcher.enqueue(nextSelection)
+  res.json(result)
 })
 
-app.post('/api/query', (req, res) => {
+app.post('/api/query', async (req, res) => {
   const queries = Array.isArray(req.body?.queries) ? req.body.queries : []
-  const results = {}
-
-  for (const query of queries) {
-    const key = query?.key
-    if (!key) continue
-    if (query.type === 'available') {
-      results[key] = buildAvailableResult(query)
-    } else if (query.type === 'selected') {
-      results[key] = buildSelectedResult(query)
-    } else if (query.type === 'selectionFull') {
-      results[key] = { items: [...selectedIds], total: selectedIds.length }
-    }
-  }
-
-  res.json({ results })
+  const result = await queryBatcher.enqueue(queries)
+  res.json(result)
 })
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -190,6 +308,6 @@ if (fs.existsSync(distPath)) {
   })
 }
 
-app.listen(PORT, () => {
-  console.log(`API server running on http://localhost:${PORT}`)
+app.listen(PORT, HOST, () => {
+  console.log(`API server running on http://${HOST}:${PORT}`)
 })
